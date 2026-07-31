@@ -150,7 +150,7 @@ void pollCommands() {
   WiFiClient client;
   HTTPClient http;
 
-  String url = "http://" + String(serverHost) + ":" + String(serverPort) + "/api/commands";
+  String url = "http://" + String(serverHost) + ":" + String(serverPort) + "/api/commands/pending";
   http.begin(client, url);
   http.setTimeout(2000);
 

@@ -52,12 +52,31 @@ io.on('connection', (socket) => {
 
 // --- REST API Endpoints ---
 
-// Wireless Cloud Telemetry Ingestion (for Battery-Powered ESP8266 / ESP32 Wi-Fi without USB)
+// ─── WiFi Telemetry Ingestion ────────────────────────────────────────────────
+// Called by the onboard ESP8266 (HTTP POST) instead of Serial.
+// Required fields match the shape SerialDataSource parses from the port.
 app.post('/api/telemetry', (req, res) => {
+  const body = req.body;
+
+  // 400 on missing body or clearly non-numeric core fields
+  if (
+    !body ||
+    typeof body !== 'object' ||
+    body.temperature === undefined ||
+    body.humidity    === undefined ||
+    isNaN(Number(body.temperature)) ||
+    isNaN(Number(body.humidity))
+  ) {
+    return res.status(400).json({
+      error: 'Malformed payload — body must be JSON with at least { temperature, humidity } as numbers',
+      received: body ?? null
+    });
+  }
+
   try {
     if (dsManager) {
-      const remoteIp = req.ip || req.connection?.remoteAddress || 'unknown';
-      dsManager.handleCloudTelemetry(req.body, remoteIp);
+      const remoteIp = req.ip || req.socket?.remoteAddress || 'unknown';
+      dsManager.handleCloudTelemetry(body, remoteIp);
     }
     res.json({ success: true, mode: 'CLOUD', timestamp: new Date().toISOString() });
   } catch (err) {
@@ -65,9 +84,8 @@ app.post('/api/telemetry', (req, res) => {
   }
 });
 
-// Command polling endpoint for ESP8266 (since we can't push to it over HTTP)
-// The ESP8266 calls GET /api/commands after each telemetry POST to check for
-// any pending fan/LED toggle commands queued by the dashboard user.
+
+// ─── Command polling — original path (kept for backwards compat) ─────────────
 app.get('/api/commands', (req, res) => {
   try {
     if (!dsManager) return res.json({ commands: [] });
@@ -79,6 +97,22 @@ app.get('/api/commands', (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ─── Command polling — /pending alias (matches Claude spec exactly) ───────────
+// The ESP8266 polls this on a ~1 s interval after each telemetry POST.
+// Returns the full pending queue then clears it atomically.
+app.get('/api/commands/pending', (req, res) => {
+  try {
+    if (!dsManager) return res.json({ commands: [] });
+    const wifiSource = dsManager.getWiFiSource();
+    const commands = wifiSource.getPendingCommands();  // snapshot
+    wifiSource.clearPendingCommands();                 // atomic clear
+    res.json({ commands });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 
 app.get('/api/status', async (req, res) => {
