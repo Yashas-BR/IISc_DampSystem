@@ -18,7 +18,16 @@ import {
   Activity,
   BarChart3,
   TrendingUp,
-  ShieldAlert
+  ShieldAlert,
+  GitMerge,
+  FlaskConical,
+  Gauge,
+  Bell,
+  BellOff,
+  Trash2,
+  Home,
+  DoorOpen,
+  Beaker
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -43,7 +52,10 @@ export const DashboardPage: React.FC = () => {
     settings,
     updateSettings,
     resetSettings,
-    sendCommand
+    sendCommand,
+    alerts,
+    acknowledgeAlert,
+    clearAlerts
   } = useSocket();
 
   const [showSettings, setShowSettings] = useState(false);
@@ -67,6 +79,40 @@ export const DashboardPage: React.FC = () => {
   const tThresh = Number(settings.temp_thresh || 30);
   const gThresh = Number(settings.gas_thresh || 700);
   const mThresh = Number(settings.moisture_thresh || 400);
+
+  // ── Feature 2: Derived Science Metrics (from Technical Report formulas) ──
+  // Dew Point: Magnus approximation (°C). Condensation starts when Td ≈ surface temp.
+  const dewPoint = parseFloat((temp - ((100 - hum) / 5)).toFixed(1));
+  // Absolute Humidity: mass of water vapor per m³ of air (g/m³)
+  const absHumidity = parseFloat(
+    (6.112 * Math.exp((17.67 * temp) / (temp + 243.5)) * hum * 2.1674 / (273.15 + temp)).toFixed(2)
+  );
+  // Mold Growth Index: composite 0–100 score
+  const moistureRisk = moisture < mThresh ? (mThresh - moisture) / mThresh * 100 : 0;
+  const moldIndex = Math.min(100, Math.round(
+    (hum * 0.4) + (temp / 50 * 30) + (gas / 1023 * 20) + (moistureRisk * 0.1)
+  ));
+  // Wardrobe Enclosure Risk: dark + stagnant air combo
+  const enclosureDark = light < 300;
+  const airStagnant = gas > gThresh;
+  const wardrobeRiskScore = Math.round(
+    ((300 - Math.min(300, light)) / 300 * 50) + (Math.min(gas, 1023) / 1023 * 50)
+  );
+
+  // ── Feature 1: Logic Gate Conditions ──
+  const condTempHigh = temp > tThresh;
+  const condHumHigh = hum > hThresh;
+  const logicGateTriggered = condTempHigh && condHumHigh;
+
+  // ── Feature 3: Room Health Scores ──
+  const room1Score = Math.min(100, Math.round(
+    (hum / hThresh * 40) + (temp / tThresh * 30) + (moisture < mThresh ? 30 : 0)
+  ));
+  const room1Health = room1Score > 70 ? 'DANGER' : room1Score > 40 ? 'CAUTION' : 'SAFE';
+  const room2Score = Math.min(100, Math.round(
+    (gas / gThresh * 60) + (light < 300 ? 40 : 0)
+  ));
+  const room2Health = room2Score > 70 ? 'HAZARD' : room2Score > 40 ? 'STAGNANT' : 'VENTILATED';
 
   const chartData = telemetryHistory.slice(-30).map((t, idx) => ({
     time: t.timestamp ? new Date(t.timestamp).toLocaleTimeString() : `#${idx}`,
@@ -437,6 +483,323 @@ export const DashboardPage: React.FC = () => {
         </div>
       </div>
 
+      {/* ══════════════════════════════════════════════════════ */}
+      {/* FEATURE 1: AUTOMATION LOGIC GATE VISUALIZER           */}
+      {/* ══════════════════════════════════════════════════════ */}
+      <div className="glass-panel rounded-2xl p-5 border border-slate-800 shadow-2xl space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <GitMerge className="h-5 w-5 text-violet-400" />
+            <div>
+              <h3 className="text-sm font-bold text-white">Automation Logic Gate Visualizer</h3>
+              <span className="text-[10px] text-slate-400 font-mono">AND Gate: Humidity &gt; {hThresh}% AND Temp &gt; {tThresh}°C → Fan Relay D5 + LED D13</span>
+            </div>
+          </div>
+          <span className={`text-[10px] font-mono font-bold px-3 py-1 rounded-lg border ${
+            logicGateTriggered
+              ? 'bg-rose-950 text-rose-300 border-rose-600 animate-pulse'
+              : 'bg-emerald-950 text-emerald-300 border-emerald-700'
+          }`}>
+            {logicGateTriggered ? '⚡ ACTUATORS ENGAGED' : '✓ SYSTEM STANDBY'}
+          </span>
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 py-2">
+          {/* Condition A: Temperature */}
+          <div className={`flex-1 max-w-[200px] rounded-2xl border-2 p-4 text-center transition-all duration-300 ${
+            condTempHigh
+              ? 'border-rose-500 bg-rose-950/40 shadow-rose-500/20 shadow-lg'
+              : 'border-slate-700 bg-slate-900/60'
+          }`}>
+            <Thermometer className={`h-6 w-6 mx-auto mb-1 ${ condTempHigh ? 'text-rose-400' : 'text-slate-500' }`} />
+            <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">Condition A</div>
+            <div className="text-sm font-bold text-white mt-0.5">Temp &gt; {tThresh}°C</div>
+            <div className="text-xl font-black font-mono mt-1" style={{ color: condTempHigh ? '#f87171' : '#64748b' }}>
+              {temp.toFixed(1)}°C
+            </div>
+            <div className={`mt-2 text-[11px] font-bold font-mono px-2 py-0.5 rounded-full inline-block ${
+              condTempHigh ? 'bg-rose-500/20 text-rose-300' : 'bg-slate-800 text-slate-400'
+            }`}>
+              {condTempHigh ? '✓ TRIGGERED' : '✗ BELOW LIMIT'}
+            </div>
+          </div>
+
+          {/* AND Gate Symbol */}
+          <div className="flex flex-col items-center gap-1 shrink-0">
+            <div className="flex items-center gap-1">
+              <div className={`h-px w-8 ${ condTempHigh ? 'bg-rose-500' : 'bg-slate-700' }`} />
+              <div className={`w-12 h-12 rounded-full border-2 flex items-center justify-center font-bold text-xs transition-all duration-300 ${
+                logicGateTriggered
+                  ? 'border-violet-400 bg-violet-950/60 text-violet-300 shadow-violet-500/30 shadow-md'
+                  : 'border-slate-700 bg-slate-900 text-slate-500'
+              }`}>
+                AND
+              </div>
+              <div className={`h-px w-8 ${ logicGateTriggered ? 'bg-violet-400' : 'bg-slate-700' }`} />
+            </div>
+            <div className={`h-px w-px`}/>
+            <div className={`text-[9px] font-mono tracking-wider ${ logicGateTriggered ? 'text-violet-400' : 'text-slate-600' }`}>LOGIC GATE</div>
+          </div>
+
+          {/* Condition B: Humidity */}
+          <div className={`flex-1 max-w-[200px] rounded-2xl border-2 p-4 text-center transition-all duration-300 ${
+            condHumHigh
+              ? 'border-cyan-500 bg-cyan-950/40 shadow-cyan-500/20 shadow-lg'
+              : 'border-slate-700 bg-slate-900/60'
+          }`}>
+            <Droplets className={`h-6 w-6 mx-auto mb-1 ${ condHumHigh ? 'text-cyan-400' : 'text-slate-500' }`} />
+            <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">Condition B</div>
+            <div className="text-sm font-bold text-white mt-0.5">Humidity &gt; {hThresh}%</div>
+            <div className="text-xl font-black font-mono mt-1" style={{ color: condHumHigh ? '#22d3ee' : '#64748b' }}>
+              {hum.toFixed(1)}%
+            </div>
+            <div className={`mt-2 text-[11px] font-bold font-mono px-2 py-0.5 rounded-full inline-block ${
+              condHumHigh ? 'bg-cyan-500/20 text-cyan-300' : 'bg-slate-800 text-slate-400'
+            }`}>
+              {condHumHigh ? '✓ TRIGGERED' : '✗ BELOW LIMIT'}
+            </div>
+          </div>
+
+          {/* Output arrow + result */}
+          <div className="flex flex-col items-center gap-1 shrink-0">
+            <div className={`h-px w-8 ${ logicGateTriggered ? 'bg-violet-400' : 'bg-slate-700' }`} />
+          </div>
+
+          {/* Result Block */}
+          <div className={`flex-1 max-w-[220px] rounded-2xl border-2 p-4 transition-all duration-300 ${
+            logicGateTriggered
+              ? 'border-violet-500 bg-violet-950/40 shadow-violet-500/20 shadow-xl'
+              : 'border-slate-700 bg-slate-900/60'
+          }`}>
+            <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider text-center mb-2">Output Result</div>
+            <div className="flex items-center gap-2 mb-2">
+              <Fan className={`h-4 w-4 shrink-0 ${ logicGateTriggered ? 'text-emerald-400 animate-spin' : 'text-slate-600' }`} />
+              <div>
+                <div className="text-[10px] text-slate-400">Exhaust Fan (D5)</div>
+                <div className={`text-xs font-bold font-mono ${ logicGateTriggered ? 'text-emerald-300' : 'text-slate-500' }`}>
+                  {logicGateTriggered ? 'RELAY CLOSED — RUNNING' : 'RELAY OPEN — STOPPED'}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Lightbulb className={`h-4 w-4 shrink-0 ${ logicGateTriggered ? 'text-rose-400 animate-pulse' : 'text-slate-600' }`} />
+              <div>
+                <div className="text-[10px] text-slate-400">Warning LED (D13)</div>
+                <div className={`text-xs font-bold font-mono ${ logicGateTriggered ? 'text-rose-300' : 'text-slate-500' }`}>
+                  {logicGateTriggered ? 'HIGH — ALARM ACTIVE' : 'LOW — STANDBY'}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="text-[10px] font-mono text-slate-500 text-center pt-1 border-t border-slate-800">
+          Logic Expression: <span className="text-violet-400">(humidity &gt; {hThresh}% &amp;&amp; temperature &gt; {tThresh}°C)</span> → <span className="text-emerald-400">digitalWrite(FAN_RELAY_PIN, HIGH) + digitalWrite(LEDPIN, HIGH)</span>
+        </div>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════ */}
+      {/* FEATURE 2: DERIVED SCIENCE METRICS                    */}
+      {/* ══════════════════════════════════════════════════════ */}
+      <div className="glass-panel rounded-2xl p-5 border border-slate-800 shadow-2xl space-y-4">
+        <div className="flex items-center gap-2">
+          <FlaskConical className="h-5 w-5 text-fuchsia-400" />
+          <div>
+            <h3 className="text-sm font-bold text-white">Derived Environmental Science Metrics</h3>
+            <span className="text-[10px] text-slate-400 font-mono">Calculated from live sensor data — Thermodynamics + Mycology Risk Models</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          {/* Dew Point */}
+          <div className="bg-slate-950/70 rounded-2xl p-4 border border-slate-800 space-y-2">
+            <div className="flex items-center gap-1.5">
+              <Thermometer className="h-4 w-4 text-sky-400" />
+              <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider">Dew Point</span>
+            </div>
+            <div className="text-2xl font-black font-mono text-sky-300">{dewPoint}°C</div>
+            <div className="text-[10px] text-slate-500 leading-tight">
+              Condensation starts when Dew Point ≈ Surface Temp.<br />
+              <span className={`font-mono font-bold ${ dewPoint >= temp - 3 ? 'text-amber-400' : 'text-emerald-400' }`}>
+                {dewPoint >= temp - 3 ? '⚠ CONDENSATION RISK' : '✓ No Condensation Risk'}
+              </span>
+            </div>
+            <div className="text-[9px] font-mono text-slate-600">Magnus Approx: T − ((100−RH)/5)</div>
+          </div>
+
+          {/* Absolute Humidity */}
+          <div className="bg-slate-950/70 rounded-2xl p-4 border border-slate-800 space-y-2">
+            <div className="flex items-center gap-1.5">
+              <Beaker className="h-4 w-4 text-indigo-400" />
+              <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider">Absolute Humidity</span>
+            </div>
+            <div className="text-2xl font-black font-mono text-indigo-300">{absHumidity} <span className="text-sm font-semibold">g/m³</span></div>
+            <div className="text-[10px] text-slate-500 leading-tight">
+              Mass of water vapor in the air.<br />
+              <span className={`font-mono font-bold ${ absHumidity > 15 ? 'text-rose-400' : absHumidity > 10 ? 'text-amber-400' : 'text-emerald-400' }`}>
+                {absHumidity > 15 ? '⚠ HIGH MOISTURE LOAD' : absHumidity > 10 ? '~ MODERATE' : '✓ LOW'}
+              </span>
+            </div>
+            <div className="text-[9px] font-mono text-slate-600">Buck Equation (simplified)</div>
+          </div>
+
+          {/* Mold Growth Index */}
+          <div className="bg-slate-950/70 rounded-2xl p-4 border border-slate-800 space-y-2">
+            <div className="flex items-center gap-1.5">
+              <Gauge className="h-4 w-4 text-fuchsia-400" />
+              <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider">Mold Growth Index</span>
+            </div>
+            <div className="flex items-baseline gap-1">
+              <div className="text-2xl font-black font-mono" style={{
+                color: moldIndex > 65 ? '#f43f5e' : moldIndex > 40 ? '#f59e0b' : '#10b981'
+              }}>{moldIndex}</div>
+              <div className="text-sm text-slate-400 font-mono">/100</div>
+            </div>
+            <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-500"
+                style={{
+                  width: `${moldIndex}%`,
+                  background: moldIndex > 65 ? '#f43f5e' : moldIndex > 40 ? '#f59e0b' : '#10b981'
+                }}
+              />
+            </div>
+            <div className="text-[9px] font-mono text-slate-600">Composite: RH×0.4 + Temp×0.3 + Gas×0.2 + Moisture×0.1</div>
+          </div>
+
+          {/* Wardrobe VOC / Enclosure Risk */}
+          <div className="bg-slate-950/70 rounded-2xl p-4 border border-slate-800 space-y-2">
+            <div className="flex items-center gap-1.5">
+              <DoorOpen className="h-4 w-4 text-amber-400" />
+              <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider">Wardrobe VOC Risk</span>
+            </div>
+            <div className="text-2xl font-black font-mono" style={{
+              color: wardrobeRiskScore > 65 ? '#f43f5e' : wardrobeRiskScore > 40 ? '#f59e0b' : '#10b981'
+            }}>{wardrobeRiskScore}%</div>
+            <div className="flex gap-2 flex-wrap">
+              <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border font-bold ${
+                enclosureDark ? 'bg-slate-950 text-amber-300 border-amber-700' : 'bg-slate-950 text-slate-500 border-slate-700'
+              }`}>
+                {enclosureDark ? '🌑 DARK' : '☀ LIT'}
+              </span>
+              <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border font-bold ${
+                airStagnant ? 'bg-rose-950 text-rose-300 border-rose-700' : 'bg-slate-950 text-emerald-400 border-slate-700'
+              }`}>
+                {airStagnant ? '💨 STAGNANT' : '✓ FRESH'}
+              </span>
+            </div>
+            <div className="text-[9px] font-mono text-slate-600">LDR dark enclosure + MQ135 VOC accumulation</div>
+          </div>
+        </div>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════ */}
+      {/* FEATURE 3: PER-ROOM HEALTH SCORECARD                  */}
+      {/* ══════════════════════════════════════════════════════ */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {/* Room 1 Health */}
+        <div className={`rounded-2xl p-4 border-2 transition-all ${
+          room1Health === 'DANGER' ? 'border-rose-600/70 bg-rose-950/20'
+          : room1Health === 'CAUTION' ? 'border-amber-600/70 bg-amber-950/20'
+          : 'border-emerald-700/60 bg-emerald-950/20'
+        }`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Home className={`h-5 w-5 ${ room1Health === 'DANGER' ? 'text-rose-400' : room1Health === 'CAUTION' ? 'text-amber-400' : 'text-emerald-400' }`} />
+              <div>
+                <div className="text-sm font-bold text-white">Room 1 — Main Room Health</div>
+                <div className="text-[10px] text-slate-400 font-mono">DHT11 + Capacitive Moisture Sensor</div>
+              </div>
+            </div>
+            <span className={`text-xs font-black font-mono px-3 py-1 rounded-xl border ${
+              room1Health === 'DANGER' ? 'bg-rose-950 text-rose-300 border-rose-600 animate-pulse'
+              : room1Health === 'CAUTION' ? 'bg-amber-950 text-amber-300 border-amber-600'
+              : 'bg-emerald-950 text-emerald-300 border-emerald-700'
+            }`}>
+              {room1Health === 'DANGER' ? '🔴' : room1Health === 'CAUTION' ? '🟡' : '🟢'} {room1Health}
+            </span>
+          </div>
+
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            {[{ label: 'Temperature', val: `${temp.toFixed(1)}°C`, limit: `>${tThresh}°C`, over: temp > tThresh, color: 'text-rose-400' },
+              { label: 'Humidity', val: `${hum.toFixed(1)}%`, limit: `>${hThresh}%`, over: hum > hThresh, color: 'text-cyan-400' },
+              { label: 'Dampness', val: `${moisture} ADC`, limit: `<${mThresh}`, over: moisture < mThresh, color: 'text-indigo-400' }
+            ].map(s => (
+              <div key={s.label} className="bg-slate-950/50 rounded-xl p-2 text-center">
+                <div className={`text-xs font-bold font-mono ${s.over ? s.color : 'text-slate-300'}`}>{s.val}</div>
+                <div className="text-[9px] text-slate-500 mt-0.5">{s.label}</div>
+                <div className={`text-[9px] font-mono mt-0.5 ${s.over ? 'text-rose-400 font-bold' : 'text-slate-600'}`}>
+                  {s.over ? `⚠ ${s.limit}` : '✓ OK'}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3">
+            <div className="flex justify-between text-[10px] font-mono text-slate-400 mb-1">
+              <span>Room 1 Risk Score</span><span>{room1Score}%</span>
+            </div>
+            <div className="w-full bg-slate-900 h-2 rounded-full overflow-hidden">
+              <div className="h-full rounded-full transition-all duration-500" style={{
+                width: `${room1Score}%`,
+                background: room1Score > 70 ? '#f43f5e' : room1Score > 40 ? '#f59e0b' : '#10b981'
+              }} />
+            </div>
+          </div>
+        </div>
+
+        {/* Room 2 Health */}
+        <div className={`rounded-2xl p-4 border-2 transition-all ${
+          room2Health === 'HAZARD' ? 'border-rose-600/70 bg-rose-950/20'
+          : room2Health === 'STAGNANT' ? 'border-amber-600/70 bg-amber-950/20'
+          : 'border-emerald-700/60 bg-emerald-950/20'
+        }`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <DoorOpen className={`h-5 w-5 ${ room2Health === 'HAZARD' ? 'text-rose-400' : room2Health === 'STAGNANT' ? 'text-amber-400' : 'text-emerald-400' }`} />
+              <div>
+                <div className="text-sm font-bold text-white">Room 2 — Wardrobe Health</div>
+                <div className="text-[10px] text-slate-400 font-mono">LDR (A0) + MQ135 Gas Sensor (A1)</div>
+              </div>
+            </div>
+            <span className={`text-xs font-black font-mono px-3 py-1 rounded-xl border ${
+              room2Health === 'HAZARD' ? 'bg-rose-950 text-rose-300 border-rose-600 animate-pulse'
+              : room2Health === 'STAGNANT' ? 'bg-amber-950 text-amber-300 border-amber-600'
+              : 'bg-emerald-950 text-emerald-300 border-emerald-700'
+            }`}>
+              {room2Health === 'HAZARD' ? '🔴' : room2Health === 'STAGNANT' ? '🟡' : '🟢'} {room2Health}
+            </span>
+          </div>
+
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            {[{ label: 'Light Level', val: `${light} ADC`, limit: `<300`, over: light < 300, color: 'text-amber-400' },
+              { label: 'Gas / VOC', val: `${gas} ADC`, limit: `>${gThresh}`, over: gas > gThresh, color: 'text-emerald-400' },
+              { label: 'Enclosure', val: enclosureDark ? 'DARK' : 'LIT', limit: 'Dark = Risk', over: enclosureDark, color: 'text-amber-400' }
+            ].map(s => (
+              <div key={s.label} className="bg-slate-950/50 rounded-xl p-2 text-center">
+                <div className={`text-xs font-bold font-mono ${s.over ? s.color : 'text-slate-300'}`}>{s.val}</div>
+                <div className="text-[9px] text-slate-500 mt-0.5">{s.label}</div>
+                <div className={`text-[9px] font-mono mt-0.5 ${s.over ? 'text-rose-400 font-bold' : 'text-slate-600'}`}>
+                  {s.over ? `⚠ ${s.limit}` : '✓ OK'}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3">
+            <div className="flex justify-between text-[10px] font-mono text-slate-400 mb-1">
+              <span>Wardrobe Risk Score</span><span>{room2Score}%</span>
+            </div>
+            <div className="w-full bg-slate-900 h-2 rounded-full overflow-hidden">
+              <div className="h-full rounded-full transition-all duration-500" style={{
+                width: `${room2Score}%`,
+                background: room2Score > 70 ? '#f43f5e' : room2Score > 40 ? '#f59e0b' : '#10b981'
+              }} />
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* ROOM-BASED IoT ANALYTICS — 2 ROOMS */}
 
       {/* ── ROOM 1: Bedroom / Living Area ── */}
@@ -613,6 +976,95 @@ export const DashboardPage: React.FC = () => {
               </ResponsiveContainer>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════ */}
+      {/* FEATURE 4: ALERT EVENT LOG                            */}
+      {/* ══════════════════════════════════════════════════════ */}
+      <div className="glass-panel rounded-2xl p-5 border border-slate-800 shadow-2xl space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Bell className="h-5 w-5 text-amber-400" />
+            <div>
+              <h3 className="text-sm font-bold text-white">Live Alert Event Log</h3>
+              <span className="text-[10px] text-slate-400 font-mono">System event history — Bench Validation Trace (Section 6 of Report)</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-mono text-slate-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+              {alerts.length} event{alerts.length !== 1 ? 's' : ''}
+            </span>
+            {alerts.length > 0 && (
+              <button
+                onClick={() => clearAlerts()}
+                className="flex items-center gap-1 text-[10px] font-mono text-slate-400 hover:text-rose-400 px-2 py-0.5 rounded border border-slate-800 hover:border-rose-700 transition-all"
+              >
+                <Trash2 className="h-3 w-3" /> Clear
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="max-h-64 overflow-y-auto space-y-1.5 pr-1" style={{ scrollbarWidth: 'thin', scrollbarColor: '#334155 transparent' }}>
+          {alerts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-8 text-slate-600">
+              <BellOff className="h-8 w-8 mb-2 opacity-40" />
+              <div className="text-xs font-mono">No alert events recorded yet</div>
+              <div className="text-[10px] text-slate-700 mt-1">Events log when sensors cross thresholds</div>
+            </div>
+          ) : (
+            alerts.slice(0, 50).map((alert, idx) => (
+              <div
+                key={alert.id ?? idx}
+                className={`flex items-start gap-3 p-2.5 rounded-xl border text-xs transition-all ${
+                  !alert.acknowledged
+                    ? alert.severity === 'CRITICAL'
+                      ? 'bg-rose-950/40 border-rose-800/60'
+                      : alert.severity === 'WARNING'
+                      ? 'bg-amber-950/30 border-amber-800/50'
+                      : 'bg-slate-900 border-slate-800'
+                    : 'bg-slate-950/50 border-slate-800/50 opacity-60'
+                }`}
+              >
+                <div className="shrink-0 mt-0.5">
+                  {alert.severity === 'CRITICAL' ? (
+                    <Flame className="h-3.5 w-3.5 text-rose-400" />
+                  ) : alert.severity === 'WARNING' ? (
+                    <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+                  ) : (
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`font-bold font-mono text-[10px] ${
+                      alert.severity === 'CRITICAL' ? 'text-rose-300'
+                      : alert.severity === 'WARNING' ? 'text-amber-300'
+                      : 'text-emerald-300'
+                    }`}>[{alert.severity ?? 'INFO'}]</span>
+                    <span className="text-slate-300 font-mono text-[10px] truncate">{alert.message}</span>
+                  </div>
+                  <div className="flex items-center gap-3 mt-0.5">
+                    <span className="text-[9px] text-slate-500 font-mono">
+                      {alert.timestamp ? new Date(alert.timestamp).toLocaleString() : 'Just now'}
+                    </span>
+                    {alert.sensor && (
+                      <span className="text-[9px] font-mono text-slate-600">Sensor: {alert.sensor}</span>
+                    )}
+                  </div>
+                </div>
+                {!alert.acknowledged && alert.id != null && (
+                  <button
+                    onClick={() => acknowledgeAlert(alert.id!)}
+                    className="shrink-0 text-[9px] font-mono text-slate-500 hover:text-emerald-400 px-1.5 py-0.5 rounded border border-slate-700 hover:border-emerald-700 transition-all"
+                  >
+                    ACK
+                  </button>
+                )}
+              </div>
+            ))
+          )}
         </div>
       </div>
 

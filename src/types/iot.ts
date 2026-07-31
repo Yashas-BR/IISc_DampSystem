@@ -18,6 +18,7 @@ export interface Alert {
   type: string;
   message: string;
   severity: 'INFO' | 'WARNING' | 'CRITICAL';
+  sensor?: string;
   acknowledged?: number | boolean;
 }
 
