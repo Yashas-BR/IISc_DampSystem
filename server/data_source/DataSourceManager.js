@@ -16,6 +16,7 @@ export class DataSourceManager extends EventEmitter {
 
     this.activeSource = null;
     this.lastData = null;
+    this.previousFanState = false;
 
     this.setupListeners(this.serialSource);
     this.setupListeners(this.simSource);
@@ -24,8 +25,8 @@ export class DataSourceManager extends EventEmitter {
 
   setupListeners(source) {
     source.on('data', (data) => {
-      // Accept data from:  the active source, OR the wifi source when mode is CLOUD
-      if (source !== this.activeSource && !(this.mode === 'CLOUD' && source === this.wifiSource)) return;
+      // Only process data from the currently active source
+      if (source !== this.activeSource) return;
 
       const riskScore = this.calculateRiskScore(data);
       const fullPayload = {
@@ -49,7 +50,7 @@ export class DataSourceManager extends EventEmitter {
     });
 
     source.on('status', (status) => {
-      if (source !== this.activeSource && !(this.mode === 'CLOUD' && source === this.wifiSource)) return;
+      if (source !== this.activeSource) return;
       this.emit('connection_status', {
         mode: this.mode,
         ...status
@@ -57,7 +58,7 @@ export class DataSourceManager extends EventEmitter {
     });
 
     source.on('alert', (alertData) => {
-      if (source !== this.activeSource && !(this.mode === 'CLOUD' && source === this.wifiSource)) return;
+      if (source !== this.activeSource) return;
       try {
         saveAlert(alertData.type, alertData.message, alertData.severity);
       } catch (e) {
@@ -78,7 +79,7 @@ export class DataSourceManager extends EventEmitter {
       if (this.activeSource === this.simSource) {
         this.simSource.disconnect().catch(() => {});
       }
-      this.activeSource = null;
+      this.activeSource = this.wifiSource;
     }
 
     // Delegate to WiFiDataSource (fires 'data' event → setupListeners picks it up)
@@ -93,37 +94,70 @@ export class DataSourceManager extends EventEmitter {
     const gThresh = Number(this.settings.gas_thresh || 700);
     const mThresh = Number(this.settings.moisture_thresh || 400);
 
+    const emitAndSave = (alert) => {
+      try { saveAlert(alert.type, alert.message, alert.severity); } catch (e) {}
+      this.emit('alert', alert);
+    };
+
+    // 1. Actuator state transitions (Fan ON/OFF)
+    const currentFanState = Boolean(data.fan);
+    if (currentFanState !== this.previousFanState) {
+      emitAndSave({
+        type: currentFanState ? 'FAN_ON' : 'FAN_OFF',
+        message: currentFanState ? 'Exhaust Fan turned ON (Threshold exceeded)' : 'Exhaust Fan turned OFF (Sensors normal)',
+        severity: 'INFO',
+        sensor: 'Relay'
+      });
+      this.previousFanState = currentFanState;
+    }
+
+    // 2. Critical combination alerts
     if (data.humidity > hThresh && data.temperature > tThresh) {
-      const alert = {
+      emitAndSave({
         type: 'CLIMATE_CRITICAL',
         message: `Humidity ${data.humidity}% AND Temp ${data.temperature}°C both exceeded limits — Fan + LED triggered`,
         severity: 'CRITICAL',
         sensor: 'DHT11'
-      };
-      try { saveAlert(alert.type, alert.message, alert.severity); } catch (e) {}
-      this.emit('alert', alert);
+      });
+    }
+
+    // 3. Individual sensor threshold alerts
+    if (data.humidity > hThresh) {
+      // Basic hysteresis/edge detection to prevent spamming could be added here.
+      // For now, we emit whenever it's actively over threshold.
+      emitAndSave({
+        type: 'HIGH_HUMIDITY',
+        message: `High Humidity detected (${data.humidity}% > ${hThresh}%)`,
+        severity: 'WARNING',
+        sensor: 'DHT11'
+      });
+    }
+
+    if (data.temperature > tThresh) {
+      emitAndSave({
+        type: 'HIGH_TEMP',
+        message: `High Temperature detected (${data.temperature}°C > ${tThresh}°C)`,
+        severity: 'WARNING',
+        sensor: 'DHT11'
+      });
     }
 
     if (data.gas > gThresh) {
-      const alert = {
+      emitAndSave({
         type: 'GAS_ALERT',
         message: `MQ135 Gas level ${data.gas} exceeded threshold ${gThresh} ADC`,
-        severity: 'WARNING',
+        severity: 'WARNING', // Use WARNING for individual, CRITICAL if combined
         sensor: 'MQ135'
-      };
-      try { saveAlert(alert.type, alert.message, alert.severity); } catch (e) {}
-      this.emit('alert', alert);
+      });
     }
 
     if (data.moisture < mThresh) {
-      const alert = {
+      emitAndSave({
         type: 'MOISTURE_ALERT',
         message: `Surface moisture ${data.moisture} ADC below damp threshold ${mThresh}`,
         severity: 'WARNING',
         sensor: 'Capacitive'
-      };
-      try { saveAlert(alert.type, alert.message, alert.severity); } catch (e) {}
-      this.emit('alert', alert);
+      });
     }
   }
 
@@ -166,7 +200,7 @@ export class DataSourceManager extends EventEmitter {
         console.warn('Serial connection attempt returned false.');
       }
     } else if (newMode === 'CLOUD') {
-      this.activeSource = null;           // WiFiDataSource is passive, not "active"
+      this.activeSource = this.wifiSource;
       await this.wifiSource.connect();
       console.log('Mode set to WIRELESS CLOUD (Listening on POST /api/telemetry)');
     } else {
@@ -208,10 +242,6 @@ export class DataSourceManager extends EventEmitter {
   }
 
   async sendCommand(commandObj) {
-    // In CLOUD mode, delegate to WiFiDataSource (queues for ESP8266 to poll)
-    if (this.mode === 'CLOUD') {
-      return await this.wifiSource.sendCommand(commandObj);
-    }
     if (this.activeSource) {
       return await this.activeSource.sendCommand(commandObj);
     }

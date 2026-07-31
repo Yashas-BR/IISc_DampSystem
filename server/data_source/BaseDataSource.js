@@ -19,6 +19,11 @@ export class BaseDataSource extends EventEmitter {
     throw new Error('sendCommand() must be implemented by subclass');
   }
 
+  handleIncoming(payload, metadata) {
+    // Only implemented by push-based sources (e.g. WiFi HTTP POST)
+    // By default it does nothing so pull-based sources aren't required to implement it.
+  }
+
   getStatus() {
     return {
       name: this.name,

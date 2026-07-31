@@ -162,8 +162,9 @@ export class WiFiDataSource extends BaseDataSource {
         });
         this.emit('alert', {
           type: 'WIFI_TIMEOUT',
-          message: 'Arduino Wi-Fi connection lost — no data received for 10 seconds.',
-          severity: 'WARNING'
+          message: 'No telemetry received from ESP8266 for 10 seconds. Check Arduino power and WiFi connection.',
+          severity: 'CRITICAL',
+          sensor: 'Network'
         });
       }
     }, this.WATCHDOG_TIMEOUT_MS);

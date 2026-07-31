@@ -26,10 +26,6 @@ export class SimulationDataSource extends BaseDataSource {
       light_thresh: 500,
       ...settings
     };
-
-    this.previousFan = false;
-    this.previousLed = false;
-    this.previousStatus = 'NORMAL';
   }
 
   updateSettings(newSettings) {
@@ -82,27 +78,6 @@ export class SimulationDataSource extends BaseDataSource {
     this.tick();
   }
 
-  calculateRiskScore() {
-    let risk = 0;
-    // Humidity contribution (0-100%) -> 35% weight
-    const hWeight = Math.min(100, Math.max(0, (this.state.humidity / 100) * 100));
-    risk += hWeight * 0.35;
-
-    // Moisture contribution (inverted: <400 is dry/damp risk) -> 25% weight
-    const mRisk = this.state.moisture < 400 ? (1 - this.state.moisture / 400) * 100 : 0;
-    risk += mRisk * 0.25;
-
-    // Gas contribution (0-1023) -> 25% weight
-    const gRisk = Math.min(100, (this.state.gas / 1023) * 100);
-    risk += gRisk * 0.25;
-
-    // Temp contribution (0-50°C) -> 15% weight
-    const tRisk = Math.min(100, Math.max(0, (this.state.temperature / 50) * 100));
-    risk += tRisk * 0.15;
-
-    return Math.round(Math.min(100, Math.max(0, risk)));
-  }
-
   reevaluate() {
     const hThresh = Number(this.settings.humidity_thresh || 60);
     const tThresh = Number(this.settings.temp_thresh || 30);
@@ -121,48 +96,6 @@ export class SimulationDataSource extends BaseDataSource {
       newStatus = 'WARNING';
     }
 
-    // Trigger alerts for state transitions
-    if (newFan !== this.previousFan) {
-      this.emit('alert', {
-        type: newFan ? 'FAN_ON' : 'FAN_OFF',
-        message: newFan ? 'Exhaust Fan turned ON (Threshold exceeded)' : 'Exhaust Fan turned OFF (Sensors normal)',
-        severity: 'INFO'
-      });
-      this.previousFan = newFan;
-    }
-
-    if (this.state.humidity > hThresh && this.state.humidity - 1 <= hThresh) {
-      this.emit('alert', {
-        type: 'HIGH_HUMIDITY',
-        message: `High Humidity detected (${this.state.humidity}% > ${hThresh}%)`,
-        severity: 'WARNING'
-      });
-    }
-
-    if (this.state.temperature > tThresh && this.state.temperature - 0.5 <= tThresh) {
-      this.emit('alert', {
-        type: 'HIGH_TEMP',
-        message: `High Temperature detected (${this.state.temperature}°C > ${tThresh}°C)`,
-        severity: 'WARNING'
-      });
-    }
-
-    if (this.state.gas > gThresh && this.state.gas - 10 <= gThresh) {
-      this.emit('alert', {
-        type: 'HIGH_GAS',
-        message: `High Gas Level detected (${this.state.gas} > ${gThresh})`,
-        severity: 'CRITICAL'
-      });
-    }
-
-    if (this.state.moisture < mThresh && this.state.moisture + 10 >= mThresh) {
-      this.emit('alert', {
-        type: 'LOW_MOISTURE',
-        message: `Low Surface Moisture detected (${this.state.moisture} < ${mThresh})`,
-        severity: 'WARNING'
-      });
-    }
-
     this.state.fan = newFan;
     this.state.led = newLed;
     this.state.status = newStatus;
@@ -171,10 +104,8 @@ export class SimulationDataSource extends BaseDataSource {
   tick() {
     if (!this.isConnected) return;
 
-    const riskScore = this.calculateRiskScore();
     const packet = {
       ...this.state,
-      riskScore,
       timestamp: new Date().toISOString()
     };
 

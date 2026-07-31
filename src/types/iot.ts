@@ -48,6 +48,7 @@ export interface ConnectionStatus {
   baudRate?: number;
   message?: string;
   error?: string;
+  remoteIp?: string;
   mode?: 'LIVE' | 'SIMULATION' | 'WIFI' | 'CLOUD';
 }
 
