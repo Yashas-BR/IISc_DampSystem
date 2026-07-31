@@ -8,10 +8,11 @@ export class SerialDataSource extends BaseDataSource {
     this.port = null;
     this.parser = null;
     this.currentPortName = null;
-    this.baudRate = 115200;
+    this.baudRate = 9600; // Default to 9600 baud
     this.reconnectTimer = null;
     this.autoReconnect = true;
     this.lastPacketTime = null;
+    this.bufferText = '';
   }
 
   async listAvailablePorts() {
@@ -30,10 +31,10 @@ export class SerialDataSource extends BaseDataSource {
           friendly.includes('ch340') ||
           friendly.includes('serial') ||
           friendly.includes('arduino') ||
-          vId === '2341' || // Arduino SA
-          vId === '1a86' || // CH340 USB Serial (WinCH)
-          vId === '0403' || // FTDI
-          vId === '10c4'    // Silicon Labs CP210x
+          vId === '2341' ||
+          vId === '1a86' ||
+          vId === '0403' ||
+          vId === '10c4'
         );
 
         return {
@@ -55,21 +56,20 @@ export class SerialDataSource extends BaseDataSource {
 
   async autoDetectPort() {
     const ports = await this.listAvailablePorts();
-    console.log('Available ports detected:', ports);
     const arduinoPort = ports.find(p => p.isArduino);
     if (arduinoPort) {
       return arduinoPort.path;
     }
-    // Fallback: pick first available COM port if any exists
     return ports.length > 0 ? ports[0].path : null;
   }
 
-  async connect(targetPort = null) {
+  async connect(targetPort = null, requestedBaud = 9600) {
     if (this.isConnected && this.port) {
       await this.disconnect();
     }
 
     this.autoReconnect = true;
+    this.baudRate = requestedBaud;
     const portToOpen = targetPort || await this.autoDetectPort();
 
     if (!portToOpen) {
@@ -94,7 +94,7 @@ export class SerialDataSource extends BaseDataSource {
           autoOpen: false
         });
 
-        this.parser = this.port.pipe(new ReadlineParser({ delimiter: '\r\n' }));
+        this.parser = this.port.pipe(new ReadlineParser({ delimiter: '\n' }));
 
         this.port.open((err) => {
           if (err) {
@@ -105,7 +105,7 @@ export class SerialDataSource extends BaseDataSource {
               port: portToOpen,
               error: err.message,
               message: err.message.includes('Access denied')
-                ? `Port ${portToOpen} is locked by Arduino IDE. Please close Serial Monitor.`
+                ? `Port ${portToOpen} is locked. Please close Arduino IDE Serial Monitor.`
                 : `Error opening ${portToOpen}: ${err.message}`
             });
             this.emit('alert', {
@@ -120,7 +120,7 @@ export class SerialDataSource extends BaseDataSource {
           }
 
           this.isConnected = true;
-          console.log(`Successfully opened serial port ${portToOpen}`);
+          console.log(`Successfully opened serial port ${portToOpen} at ${this.baudRate} baud.`);
           this.emit('status', {
             connected: true,
             port: portToOpen,
@@ -143,11 +143,6 @@ export class SerialDataSource extends BaseDataSource {
             port: this.currentPortName,
             message: 'Port closed'
           });
-          this.emit('alert', {
-            type: 'DISCONNECT',
-            message: `Arduino disconnected from ${this.currentPortName}`,
-            severity: 'CRITICAL'
-          });
           this.scheduleReconnect();
         });
 
@@ -166,27 +161,84 @@ export class SerialDataSource extends BaseDataSource {
 
   handleIncomingData(line) {
     line = line.trim();
-    if (!line || !line.startsWith('{')) return;
+    if (!line) return;
 
-    try {
-      const data = JSON.parse(line);
-      this.lastPacketTime = new Date().toISOString();
+    console.log(`[SERIAL STREAM ${this.currentPortName}]:`, line);
+
+    let parsedData = null;
+
+    // 1. Try Parsing JSON Format
+    const startIdx = line.indexOf('{');
+    const endIdx = line.lastIndexOf('}');
+    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+      try {
+        const jsonSub = line.substring(startIdx, endIdx + 1);
+        const data = JSON.parse(jsonSub);
+        parsedData = {
+          temperature: Number(data.temperature ?? 25.0),
+          humidity: Number(data.humidity ?? 50),
+          light: Number(data.light ?? 500),
+          gas: Number(data.gas ?? 400),
+          moisture: Number(data.moisture ?? 600),
+          fan: Boolean(data.fan),
+          led: Boolean(data.led),
+          status: data.status || 'NORMAL'
+        };
+      } catch (e) {
+        // Fallthrough to text parser
+      }
+    }
+
+    // 2. Try Parsing Text Format: "Temp: 24.0°C | Air Humid: 54.0% | Light: 561 | Gas Level: 432 | Surf Moist: 1010 -> [STATUS: NORMAL]"
+    if (!parsedData && (line.includes('Temp') || line.includes('Humid') || line.includes('Light') || line.includes('Gas') || line.includes('Moist') || line.includes('LED') || line.includes('Fan'))) {
+      this.bufferText += ' ' + line;
       
-      const parsedData = {
-        temperature: Number(data.temperature ?? 25.0),
-        humidity: Number(data.humidity ?? 50),
-        light: Number(data.light ?? 500),
-        gas: Number(data.gas ?? 400),
-        moisture: Number(data.moisture ?? 600),
-        fan: Boolean(data.fan),
-        led: Boolean(data.led),
-        status: data.status || 'NORMAL',
-        timestamp: this.lastPacketTime
-      };
+      const tMatch = this.bufferText.match(/Temp:\s*([0-9.]+)/i);
+      const hMatch = this.bufferText.match(/Humid(?:ity)?:\s*([0-9.]+)/i);
+      const lMatch = this.bufferText.match(/Light:\s*([0-9]+)/i);
+      const gMatch = this.bufferText.match(/Gas(?:\s*Level)?:\s*([0-9]+)/i);
+      const mMatch = this.bufferText.match(/Moist(?:ure)?:\s*([0-9]+)/i);
+      const sMatch = this.bufferText.match(/STATUS:\s*([A-Z_]+)/i);
+      const ledMatch = this.bufferText.match(/LED:\s*(ON|OFF|1|0|true|false)/i);
+      const fanMatch = this.bufferText.match(/Fan:\s*(ON|OFF|1|0|true|false)/i);
 
+      if (tMatch || hMatch || lMatch || gMatch || mMatch) {
+        const tempVal = tMatch ? parseFloat(tMatch[1]) : 24.5;
+        const humVal = hMatch ? parseFloat(hMatch[1]) : 52;
+        const lightVal = lMatch ? parseInt(lMatch[1]) : 500;
+        const gasVal = gMatch ? parseInt(gMatch[1]) : 350;
+        const moistVal = mMatch ? parseInt(mMatch[1]) : 700;
+        const statusVal = sMatch ? sMatch[1] : (humVal > 60 || gasVal > 700 ? 'WARNING' : 'NORMAL');
+
+        // Evaluate LED state: explicit LED string OR LDR dark (< 500) OR high humidity / gas / temp / low moisture
+        const ledVal = ledMatch
+          ? (ledMatch[1].toUpperCase() === 'ON' || ledMatch[1] === '1' || ledMatch[1].toLowerCase() === 'true')
+          : (lightVal < 500 || humVal > 60 || tempVal > 30 || gasVal > 700 || moistVal < 400 || statusVal !== 'NORMAL');
+
+        const fanVal = fanMatch
+          ? (fanMatch[1].toUpperCase() === 'ON' || fanMatch[1] === '1' || fanMatch[1].toLowerCase() === 'true')
+          : (humVal > 60 || gasVal > 700);
+
+        parsedData = {
+          temperature: tempVal,
+          humidity: humVal,
+          light: lightVal,
+          gas: gasVal,
+          moisture: moistVal,
+          fan: fanVal,
+          led: ledVal,
+          status: statusVal
+        };
+
+        this.bufferText = '';
+      }
+    }
+
+    if (parsedData) {
+      this.lastPacketTime = new Date().toISOString();
+      parsedData.timestamp = this.lastPacketTime;
+      console.log('[PARSED TELEMETRY PACKET]:', parsedData);
       this.emit('data', parsedData);
-    } catch (e) {
-      console.warn('Failed to parse JSON from Arduino:', line, e.message);
     }
   }
 
@@ -196,7 +248,7 @@ export class SerialDataSource extends BaseDataSource {
       this.reconnectTimer = null;
       if (!this.isConnected && this.currentPortName) {
         console.log(`Attempting auto-reconnect to ${this.currentPortName}...`);
-        await this.connect(this.currentPortName);
+        await this.connect(this.currentPortName, this.baudRate);
       }
     }, 4000);
   }
