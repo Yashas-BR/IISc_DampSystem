@@ -10,7 +10,7 @@ import {
 
 interface SocketContextType {
   socket: Socket | null;
-  mode: 'LIVE' | 'SIMULATION';
+  mode: 'LIVE' | 'SIMULATION' | 'WIFI' | 'CLOUD';
   latestTelemetry: TelemetryData | null;
   telemetryHistory: TelemetryData[];
   connectionStatus: ConnectionStatus;
@@ -18,7 +18,7 @@ interface SocketContextType {
   alerts: Alert[];
   unreadAlertCount: number;
   settings: SystemSettings;
-  switchMode: (mode: 'LIVE' | 'SIMULATION', portPath?: string) => Promise<void>;
+  switchMode: (mode: 'LIVE' | 'SIMULATION' | 'WIFI' | 'CLOUD', portPath?: string) => Promise<void>;
   updateSimulation: (values: Partial<TelemetryData>) => Promise<void>;
   updateSettings: (newSettings: SystemSettings) => Promise<void>;
   resetSettings: () => Promise<void>;
@@ -32,7 +32,7 @@ const SocketContext = createContext<SocketContextType | undefined>(undefined);
 
 export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [socket, setSocket] = useState<Socket | null>(null);
-  const [mode, setMode] = useState<'LIVE' | 'SIMULATION'>('SIMULATION');
+  const [mode, setMode] = useState<'LIVE' | 'SIMULATION' | 'WIFI' | 'CLOUD'>('SIMULATION');
   const [latestTelemetry, setLatestTelemetry] = useState<TelemetryData | null>(null);
   const [telemetryHistory, setTelemetryHistory] = useState<TelemetryData[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>({
@@ -122,7 +122,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  const switchMode = async (newMode: 'LIVE' | 'SIMULATION', portPath?: string) => {
+  const switchMode = async (newMode: 'LIVE' | 'SIMULATION' | 'WIFI' | 'CLOUD', portPath?: string) => {
     try {
       const res = await fetch('/api/mode', {
         method: 'POST',

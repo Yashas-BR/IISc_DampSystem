@@ -5,6 +5,7 @@ import {
   Cpu,
   Radio,
   Sliders,
+  Wifi,
   CheckCircle2,
   AlertTriangle,
   XCircle,
@@ -56,8 +57,9 @@ export const Header: React.FC = () => {
 
         {/* Controls, Mode Switcher & Status Badges */}
         <div className="flex flex-wrap items-center gap-3">
-          {/* Mode Switcher Toggle Button */}
+          {/* Mode Switcher Toggle Buttons */}
           <div className="flex items-center rounded-xl bg-slate-950/80 p-1 border border-slate-800">
+            {/* LIVE — physical Arduino over Serial */}
             <button
               onClick={() => {
                 const target = availablePorts.length > 0 ? availablePorts[0].path : null;
@@ -70,8 +72,23 @@ export const Header: React.FC = () => {
               }`}
             >
               <Radio className={`h-3.5 w-3.5 ${mode === 'LIVE' ? 'animate-pulse text-emerald-400' : ''}`} />
-              <span>🟢 Live Mode</span>
+              <span>🟢 Live</span>
             </button>
+
+            {/* WIFI — battery-powered Arduino via ESP8266 HTTP POST */}
+            <button
+              onClick={() => switchMode('CLOUD')}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
+                mode === 'CLOUD' || mode === 'WIFI'
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/50 shadow-md shadow-cyan-500/10'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Wifi className={`h-3.5 w-3.5 ${(mode === 'CLOUD' || mode === 'WIFI') ? 'animate-pulse text-cyan-400' : ''}`} />
+              <span>📶 WiFi</span>
+            </button>
+
+            {/* SIMULATION — synthetic data, no hardware */}
             <button
               onClick={() => switchMode('SIMULATION')}
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
@@ -81,11 +98,12 @@ export const Header: React.FC = () => {
               }`}
             >
               <Sliders className="h-3.5 w-3.5 text-purple-400" />
-              <span>🟣 Simulation Mode</span>
+              <span>🟣 Sim</span>
             </button>
           </div>
 
-          {/* Connection Status Badge & Port Dropdown */}
+          {/* Connection Status Badge & Port Dropdown — hidden in WiFi/Cloud mode */}
+          {mode !== 'CLOUD' && mode !== 'WIFI' && (
           <div className="relative">
             <button
               onClick={() => {
@@ -149,6 +167,25 @@ export const Header: React.FC = () => {
               </div>
             )}
           </div>
+          )}
+
+          {/* WiFi connection status badge — shown only in WiFi/Cloud mode */}
+          {(mode === 'CLOUD' || mode === 'WIFI') && (
+            <div className={`flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-medium border ${
+              connectionStatus.connected
+                ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
+                : 'bg-slate-900/60 text-slate-400 border-slate-700'
+            }`}>
+              <span className={`h-2 w-2 rounded-full ${
+                connectionStatus.connected ? 'bg-cyan-400 animate-pulse' : 'bg-slate-600'
+              }`} />
+              <span className="font-mono">
+                {connectionStatus.connected
+                  ? `WiFi ${connectionStatus.port || '— ESP8266'}`
+                  : 'Waiting for ESP8266…'}
+              </span>
+            </div>
+          )}
 
           {/* Notification Bell & Unread Badge Drawer */}
           <div className="relative">

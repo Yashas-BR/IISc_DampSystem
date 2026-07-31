@@ -9,7 +9,7 @@ export interface TelemetryData {
   status: 'NORMAL' | 'WARNING' | 'CRITICAL';
   riskScore?: number;
   timestamp?: string;
-  mode?: 'LIVE' | 'SIMULATION';
+  mode?: 'LIVE' | 'SIMULATION' | 'WIFI' | 'CLOUD';
 }
 
 export interface Alert {
@@ -48,7 +48,7 @@ export interface ConnectionStatus {
   baudRate?: number;
   message?: string;
   error?: string;
-  mode?: 'LIVE' | 'SIMULATION';
+  mode?: 'LIVE' | 'SIMULATION' | 'WIFI' | 'CLOUD';
 }
 
 export interface AnalyticsSummary {
