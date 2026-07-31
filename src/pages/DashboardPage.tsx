@@ -15,9 +15,26 @@ import {
   CheckCircle2,
   AlertTriangle,
   Flame,
-  Activity
+  Activity,
+  BarChart3,
+  TrendingUp,
+  ShieldAlert
 } from 'lucide-react';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  ReferenceLine,
+  Legend
+} from 'recharts';
 
 export const DashboardPage: React.FC = () => {
   const {
@@ -26,8 +43,7 @@ export const DashboardPage: React.FC = () => {
     settings,
     updateSettings,
     resetSettings,
-    sendCommand,
-    connectionStatus
+    sendCommand
   } = useSocket();
 
   const [showSettings, setShowSettings] = useState(false);
@@ -52,11 +68,14 @@ export const DashboardPage: React.FC = () => {
   const gThresh = Number(settings.gas_thresh || 700);
   const mThresh = Number(settings.moisture_thresh || 400);
 
-  const chartData = telemetryHistory.slice(-40).map((t, idx) => ({
+  const chartData = telemetryHistory.slice(-30).map((t, idx) => ({
     time: t.timestamp ? new Date(t.timestamp).toLocaleTimeString() : `#${idx}`,
     Temperature: t.temperature,
     Humidity: t.humidity,
-    Gas: t.gas
+    Gas: t.gas,
+    Moisture: t.moisture,
+    Light: t.light,
+    RiskScore: t.riskScore || Math.round((t.humidity * 0.35) + (t.gas / 1023 * 25) + (t.temperature / 50 * 15))
   }));
 
   const handleSaveSettings = (e: React.FormEvent) => {
@@ -418,39 +437,182 @@ export const DashboardPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Real-Time Live Telemetry Chart */}
-      <div className="glass-panel rounded-2xl p-5 border border-slate-800 shadow-2xl space-y-4">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-          <h3 className="text-sm font-bold text-white flex items-center gap-2">
-            <Activity className="h-4 w-4 text-emerald-400" />
-            <span>Live Stream Telemetry Chart (Temp, Humidity, Gas)</span>
-          </h3>
-          <span className="text-xs font-mono text-emerald-400 flex items-center gap-1">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" /> Live 2s Feed
+      {/* ROOM-BASED IoT ANALYTICS — 2 ROOMS */}
+
+      {/* ── ROOM 1: Bedroom / Living Area ── */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 bg-cyan-950/50 border border-cyan-700/50 rounded-xl px-3 py-1.5">
+            <span className="text-lg">🏠</span>
+            <div>
+              <span className="text-xs font-bold text-cyan-300 block">Room 1 — Main Room</span>
+              <span className="text-[10px] text-slate-400 font-mono">Sensors: DHT11 (D2) + Capacitive Moisture (A2)</span>
+            </div>
+          </div>
+          <span className="text-xs font-mono text-slate-400 flex items-center gap-1">
+            <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse" /> Live Damp & Temp Monitoring
           </span>
         </div>
 
-        <div className="h-64 w-full pt-2">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData}>
-              <defs>
-                <linearGradient id="gradTemp" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.4} />
-                  <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="gradHum" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.4} />
-                  <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-              <XAxis dataKey="time" stroke="#64748b" tick={{ fontSize: 10 }} />
-              <YAxis stroke="#64748b" tick={{ fontSize: 10 }} />
-              <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', fontSize: '11px' }} />
-              <Area type="monotone" dataKey="Humidity" stroke="#06b6d4" fillOpacity={1} fill="url(#gradHum)" strokeWidth={2} />
-              <Area type="monotone" dataKey="Temperature" stroke="#f43f5e" fillOpacity={1} fill="url(#gradTemp)" strokeWidth={2} />
-            </AreaChart>
-          </ResponsiveContainer>
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+          {/* GRAPH 1: Temp vs Humidity — Room 1 */}
+          <div className="glass-panel rounded-2xl p-5 border border-cyan-900/50 shadow-2xl space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Thermometer className="h-4 w-4 text-cyan-400" />
+                <div>
+                  <h4 className="text-xs font-bold text-white">Temperature & Humidity Trend</h4>
+                  <span className="text-[10px] text-slate-400">DHT11 Sensor — Room 1</span>
+                </div>
+              </div>
+              <span className={`text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${hum > hThresh ? 'bg-rose-950 text-rose-300 border-rose-700 animate-pulse' : 'bg-slate-900 text-emerald-400 border-slate-700'}`}>
+                {hum > hThresh ? '⚠ HIGH MOLD RISK' : '✓ SAFE'}
+              </span>
+            </div>
+
+            <div className="h-56 w-full pt-1">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData}>
+                  <defs>
+                    <linearGradient id="gradTemp2" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.4} />
+                      <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="gradHum2" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.45} />
+                      <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="time" stroke="#64748b" tick={{ fontSize: 9 }} />
+                  <YAxis stroke="#64748b" tick={{ fontSize: 9 }} />
+                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', fontSize: '11px' }} />
+                  <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '4px' }} />
+                  <ReferenceLine y={hThresh} stroke="#06b6d4" strokeDasharray="4 4" label={{ value: `Humidity Limit (${hThresh}%)`, fill: '#06b6d4', fontSize: 9 }} />
+                  <ReferenceLine y={tThresh} stroke="#f43f5e" strokeDasharray="4 4" label={{ value: `Temp Limit (${tThresh}°C)`, fill: '#f43f5e', fontSize: 9 }} />
+                  <Area type="monotone" dataKey="Humidity" name="Humidity (%)" stroke="#06b6d4" fillOpacity={1} fill="url(#gradHum2)" strokeWidth={2} />
+                  <Area type="monotone" dataKey="Temperature" name="Temperature (°C)" stroke="#f43f5e" fillOpacity={1} fill="url(#gradTemp2)" strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* GRAPH 2: Surface Moisture over time — Room 1 */}
+          <div className="glass-panel rounded-2xl p-5 border border-cyan-900/50 shadow-2xl space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Layers className="h-4 w-4 text-indigo-400" />
+                <div>
+                  <h4 className="text-xs font-bold text-white">Wall / Surface Dampness Level</h4>
+                  <span className="text-[10px] text-slate-400">Capacitive Moisture Sensor (A2) — Room 1</span>
+                </div>
+              </div>
+              <span className={`text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${moisture < mThresh ? 'bg-amber-950 text-amber-300 border-amber-700 animate-pulse' : 'bg-slate-900 text-emerald-400 border-slate-700'}`}>
+                {moisture < mThresh ? '💧 DAMP DETECTED' : '✓ DRY & SAFE'}
+              </span>
+            </div>
+
+            <div className="h-56 w-full pt-1">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData}>
+                  <defs>
+                    <linearGradient id="gradMoist" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#6366f1" stopOpacity={0.5} />
+                      <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="time" stroke="#64748b" tick={{ fontSize: 9 }} />
+                  <YAxis domain={[0, 1023]} stroke="#64748b" tick={{ fontSize: 9 }} />
+                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', fontSize: '11px' }} />
+                  <ReferenceLine y={mThresh} stroke="#f59e0b" strokeDasharray="4 4" label={{ value: `Damp Alert (${mThresh} ADC)`, fill: '#f59e0b', fontSize: 9 }} />
+                  <Area type="monotone" dataKey="Moisture" name="Surface Moisture (ADC)" stroke="#6366f1" fillOpacity={1} fill="url(#gradMoist)" strokeWidth={2.5} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── ROOM 2: Wardrobe ── */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 bg-amber-950/50 border border-amber-700/50 rounded-xl px-3 py-1.5">
+            <span className="text-lg">🚪</span>
+            <div>
+              <span className="text-xs font-bold text-amber-300 block">Room 2 — Wardrobe / Enclosed Space</span>
+              <span className="text-[10px] text-slate-400 font-mono">Sensors: LDR (A0) + MQ135 Smoke (A1) + LED Alert (D13) + Fan Relay (D5)</span>
+            </div>
+          </div>
+          <span className="text-xs font-mono text-slate-400 flex items-center gap-1">
+            <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" /> Live Dark/Smoke Detection
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+          {/* GRAPH 3: LDR Light Level — Room 2 Wardrobe */}
+          <div className="glass-panel rounded-2xl p-5 border border-amber-900/50 shadow-2xl space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sun className="h-4 w-4 text-amber-400" />
+                <div>
+                  <h4 className="text-xs font-bold text-white">Wardrobe Light Level (LDR)</h4>
+                  <span className="text-[10px] text-slate-400">LDR Sensor (A0) — Wardrobe: Low = Door Closed / Dark</span>
+                </div>
+              </div>
+              <span className={`text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${light < 500 ? 'bg-slate-900 text-amber-300 border-amber-700' : 'bg-slate-900 text-slate-400 border-slate-700'}`}>
+                {light < 500 ? '🌑 DARK (Door Closed)' : '☀ LIGHT (Door Open)'}
+              </span>
+            </div>
+
+            <div className="h-56 w-full pt-1">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData}>
+                  <defs>
+                    <linearGradient id="gradLight" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.5} />
+                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="time" stroke="#64748b" tick={{ fontSize: 9 }} />
+                  <YAxis domain={[0, 1023]} stroke="#64748b" tick={{ fontSize: 9 }} />
+                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', fontSize: '11px' }} />
+                  <ReferenceLine y={500} stroke="#f59e0b" strokeDasharray="4 4" label={{ value: 'Dark Threshold (500)', fill: '#f59e0b', fontSize: 9 }} />
+                  <Area type="monotone" dataKey="Light" name="Light Level (ADC)" stroke="#f59e0b" fillOpacity={1} fill="url(#gradLight)" strokeWidth={2.5} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* GRAPH 4: MQ135 Smoke & Gas — Room 2 Wardrobe */}
+          <div className="glass-panel rounded-2xl p-5 border border-amber-900/50 shadow-2xl space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Wind className="h-4 w-4 text-emerald-400" />
+                <div>
+                  <h4 className="text-xs font-bold text-white">Wardrobe Air Quality / Smoke (MQ135)</h4>
+                  <span className="text-[10px] text-slate-400">MQ135 Gas Sensor (A1) — Wardrobe: Detects smoke & VOCs</span>
+                </div>
+              </div>
+              <span className={`text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${gas > gThresh ? 'bg-rose-950 text-rose-300 border-rose-700 animate-pulse' : 'bg-slate-900 text-emerald-400 border-slate-700'}`}>
+                {gas > gThresh ? '🚨 SMOKE / GAS ALERT' : '✓ CLEAN AIR'}
+              </span>
+            </div>
+
+            <div className="h-56 w-full pt-1">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="time" stroke="#64748b" tick={{ fontSize: 9 }} />
+                  <YAxis domain={[0, 1023]} stroke="#64748b" tick={{ fontSize: 9 }} />
+                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', fontSize: '11px' }} />
+                  <ReferenceLine y={gThresh} stroke="#f43f5e" strokeDasharray="4 4" label={{ value: `Gas Alert (${gThresh} ADC)`, fill: '#f43f5e', fontSize: 9 }} />
+                  <Bar dataKey="Gas" name="Gas / Smoke (ADC)" fill="#10b981" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
         </div>
       </div>
 
