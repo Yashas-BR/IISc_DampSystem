@@ -1,27 +1,31 @@
 import { EventEmitter } from 'events';
 import SerialDataSource from './SerialDataSource.js';
 import SimulationDataSource from './SimulationDataSource.js';
+import WiFiDataSource from './WiFiDataSource.js';
 import { saveTelemetry, saveAlert, getSettings } from '../db.js';
 
 export class DataSourceManager extends EventEmitter {
   constructor() {
     super();
-    this.mode = 'SIMULATION'; // Default mode ('LIVE' | 'SIMULATION' | 'CLOUD')
+    this.mode = 'SIMULATION'; // 'LIVE' | 'SIMULATION' | 'CLOUD'
     this.settings = getSettings();
-    
+
     this.serialSource = new SerialDataSource();
     this.simSource = new SimulationDataSource(this.settings);
-    
+    this.wifiSource = new WiFiDataSource();
+
     this.activeSource = null;
     this.lastData = null;
 
     this.setupListeners(this.serialSource);
     this.setupListeners(this.simSource);
+    this.setupListeners(this.wifiSource);
   }
 
   setupListeners(source) {
     source.on('data', (data) => {
-      if (source !== this.activeSource && this.mode !== 'CLOUD') return;
+      // Accept data from:  the active source, OR the wifi source when mode is CLOUD
+      if (source !== this.activeSource && !(this.mode === 'CLOUD' && source === this.wifiSource)) return;
 
       const riskScore = this.calculateRiskScore(data);
       const fullPayload = {
@@ -31,18 +35,21 @@ export class DataSourceManager extends EventEmitter {
       };
 
       this.lastData = fullPayload;
-      
+
       try {
         saveTelemetry(fullPayload, this.mode, riskScore);
       } catch (err) {
         console.error('Failed to save telemetry to DB:', err.message);
       }
 
+      // Check thresholds and generate alerts
+      this.evaluateAlerts(fullPayload);
+
       this.emit('telemetry', fullPayload);
     });
 
     source.on('status', (status) => {
-      if (source !== this.activeSource && this.mode !== 'CLOUD') return;
+      if (source !== this.activeSource && !(this.mode === 'CLOUD' && source === this.wifiSource)) return;
       this.emit('connection_status', {
         mode: this.mode,
         ...status
@@ -50,7 +57,7 @@ export class DataSourceManager extends EventEmitter {
     });
 
     source.on('alert', (alertData) => {
-      if (source !== this.activeSource && this.mode !== 'CLOUD') return;
+      if (source !== this.activeSource && !(this.mode === 'CLOUD' && source === this.wifiSource)) return;
       try {
         saveAlert(alertData.type, alertData.message, alertData.severity);
       } catch (e) {
@@ -60,44 +67,67 @@ export class DataSourceManager extends EventEmitter {
     });
   }
 
-  // Support direct Cloud HTTP / Wireless Wi-Fi Ingestion from battery-powered Arduino/ESP32
-  handleCloudTelemetry(data) {
-    const parsedData = {
-      temperature: Number(data.temperature ?? 25.0),
-      humidity: Number(data.humidity ?? 50),
-      light: Number(data.light ?? 500),
-      gas: Number(data.gas ?? 400),
-      moisture: Number(data.moisture ?? 600),
-      fan: Boolean(data.fan),
-      led: Boolean(data.led),
-      status: data.status || 'NORMAL',
-      timestamp: new Date().toISOString()
-    };
+  // ─── Cloud / WiFi HTTP ingestion (called by POST /api/telemetry route) ──
 
-    const riskScore = this.calculateRiskScore(parsedData);
-    const fullPayload = {
-      ...parsedData,
-      riskScore,
-      mode: 'CLOUD'
-    };
-
-    this.mode = 'CLOUD';
-    this.lastData = fullPayload;
-
-    try {
-      saveTelemetry(fullPayload, 'CLOUD', riskScore);
-    } catch (err) {
-      console.error('Failed to save cloud telemetry to DB:', err.message);
+  handleCloudTelemetry(payload, remoteIp) {
+    // Auto-switch to CLOUD mode when the first wireless packet arrives
+    if (this.mode !== 'CLOUD') {
+      console.log('[DataSourceManager] Received wireless telemetry — auto-switching to CLOUD mode.');
+      this.mode = 'CLOUD';
+      // Stop simulation if it was running
+      if (this.activeSource === this.simSource) {
+        this.simSource.disconnect().catch(() => {});
+      }
+      this.activeSource = null;
     }
 
-    this.emit('telemetry', fullPayload);
-    this.emit('connection_status', {
-      connected: true,
-      port: 'WIRELESS_CLOUD_WIFI',
-      mode: 'CLOUD',
-      message: 'Receiving Wireless Cloud Telemetry over Wi-Fi'
-    });
+    // Delegate to WiFiDataSource (fires 'data' event → setupListeners picks it up)
+    this.wifiSource.handleIncoming(payload, remoteIp);
   }
+
+  // ─── Threshold alert evaluation ────────────────────────────────────────
+
+  evaluateAlerts(data) {
+    const hThresh = Number(this.settings.humidity_thresh || 60);
+    const tThresh = Number(this.settings.temp_thresh || 30);
+    const gThresh = Number(this.settings.gas_thresh || 700);
+    const mThresh = Number(this.settings.moisture_thresh || 400);
+
+    if (data.humidity > hThresh && data.temperature > tThresh) {
+      const alert = {
+        type: 'CLIMATE_CRITICAL',
+        message: `Humidity ${data.humidity}% AND Temp ${data.temperature}°C both exceeded limits — Fan + LED triggered`,
+        severity: 'CRITICAL',
+        sensor: 'DHT11'
+      };
+      try { saveAlert(alert.type, alert.message, alert.severity); } catch (e) {}
+      this.emit('alert', alert);
+    }
+
+    if (data.gas > gThresh) {
+      const alert = {
+        type: 'GAS_ALERT',
+        message: `MQ135 Gas level ${data.gas} exceeded threshold ${gThresh} ADC`,
+        severity: 'WARNING',
+        sensor: 'MQ135'
+      };
+      try { saveAlert(alert.type, alert.message, alert.severity); } catch (e) {}
+      this.emit('alert', alert);
+    }
+
+    if (data.moisture < mThresh) {
+      const alert = {
+        type: 'MOISTURE_ALERT',
+        message: `Surface moisture ${data.moisture} ADC below damp threshold ${mThresh}`,
+        severity: 'WARNING',
+        sensor: 'Capacitive'
+      };
+      try { saveAlert(alert.type, alert.message, alert.severity); } catch (e) {}
+      this.emit('alert', alert);
+    }
+  }
+
+  // ─── Lifecycle ─────────────────────────────────────────────────────────
 
   async init() {
     console.log('Initializing DataSourceManager...');
@@ -118,8 +148,13 @@ export class DataSourceManager extends EventEmitter {
   async setMode(newMode, portPath = null) {
     console.log(`Switching DataSourceManager mode to ${newMode}`);
 
+    // Disconnect current active source
     if (this.activeSource) {
       await this.activeSource.disconnect();
+    }
+    // Also disconnect wifi source if switching away from CLOUD
+    if (this.mode === 'CLOUD' && newMode !== 'CLOUD') {
+      await this.wifiSource.disconnect();
     }
 
     this.mode = newMode;
@@ -131,7 +166,8 @@ export class DataSourceManager extends EventEmitter {
         console.warn('Serial connection attempt returned false.');
       }
     } else if (newMode === 'CLOUD') {
-      this.activeSource = null;
+      this.activeSource = null;           // WiFiDataSource is passive, not "active"
+      await this.wifiSource.connect();
       console.log('Mode set to WIRELESS CLOUD (Listening on POST /api/telemetry)');
     } else {
       this.activeSource = this.simSource;
@@ -172,6 +208,10 @@ export class DataSourceManager extends EventEmitter {
   }
 
   async sendCommand(commandObj) {
+    // In CLOUD mode, delegate to WiFiDataSource (queues for ESP8266 to poll)
+    if (this.mode === 'CLOUD') {
+      return await this.wifiSource.sendCommand(commandObj);
+    }
     if (this.activeSource) {
       return await this.activeSource.sendCommand(commandObj);
     }
@@ -179,12 +219,29 @@ export class DataSourceManager extends EventEmitter {
   }
 
   getStatus() {
+    let activeSourceStatus;
+    if (this.mode === 'CLOUD') {
+      activeSourceStatus = this.wifiSource.getStatus();
+    } else if (this.activeSource) {
+      activeSourceStatus = this.activeSource.getStatus();
+    } else {
+      activeSourceStatus = { name: 'NONE', connected: false, port: null };
+    }
+
     return {
       mode: this.mode,
-      activeSourceStatus: this.activeSource ? this.activeSource.getStatus() : { name: 'CLOUD', connected: true, port: 'WIRELESS_CLOUD_WIFI' },
+      activeSourceStatus,
       lastData: this.lastData,
       settings: this.settings
     };
+  }
+
+  /**
+   * getWiFiSource() — Exposes the WiFiDataSource instance so that
+   * route handlers can call getPendingCommands() / clearPendingCommands().
+   */
+  getWiFiSource() {
+    return this.wifiSource;
   }
 
   async getAvailablePorts() {

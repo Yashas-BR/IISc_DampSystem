@@ -56,13 +56,30 @@ io.on('connection', (socket) => {
 app.post('/api/telemetry', (req, res) => {
   try {
     if (dsManager) {
-      dsManager.handleCloudTelemetry(req.body);
+      const remoteIp = req.ip || req.connection?.remoteAddress || 'unknown';
+      dsManager.handleCloudTelemetry(req.body, remoteIp);
     }
     res.json({ success: true, mode: 'CLOUD', timestamp: new Date().toISOString() });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Command polling endpoint for ESP8266 (since we can't push to it over HTTP)
+// The ESP8266 calls GET /api/commands after each telemetry POST to check for
+// any pending fan/LED toggle commands queued by the dashboard user.
+app.get('/api/commands', (req, res) => {
+  try {
+    if (!dsManager) return res.json({ commands: [] });
+    const wifiSource = dsManager.getWiFiSource();
+    const commands = wifiSource.getPendingCommands();
+    wifiSource.clearPendingCommands();
+    res.json({ commands });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 app.get('/api/status', async (req, res) => {
   try {
