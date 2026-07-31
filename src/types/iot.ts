@@ -37,6 +37,7 @@ export interface SerialPortInfo {
   pnpId?: string;
   vendorId?: string;
   productId?: string;
+  friendlyName?: string;
   isArduino?: boolean;
 }
 

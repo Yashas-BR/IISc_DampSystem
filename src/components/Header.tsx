@@ -8,8 +8,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   XCircle,
-  RefreshCw,
-  Layers
+  RefreshCw
 } from 'lucide-react';
 
 export const Header: React.FC = () => {
@@ -60,7 +59,10 @@ export const Header: React.FC = () => {
           {/* Mode Switcher Toggle Button */}
           <div className="flex items-center rounded-xl bg-slate-950/80 p-1 border border-slate-800">
             <button
-              onClick={() => switchMode('LIVE')}
+              onClick={() => {
+                const target = availablePorts.length > 0 ? availablePorts[0].path : null;
+                switchMode('LIVE', target || undefined);
+              }}
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
                 mode === 'LIVE'
                   ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 shadow-md shadow-emerald-500/10'
@@ -86,7 +88,10 @@ export const Header: React.FC = () => {
           {/* Connection Status Badge & Port Dropdown */}
           <div className="relative">
             <button
-              onClick={() => setShowPortMenu(!showPortMenu)}
+              onClick={() => {
+                refreshPorts();
+                setShowPortMenu(!showPortMenu);
+              }}
               className={`flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-medium border transition-all ${
                 connectionStatus.connected
                   ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
@@ -97,18 +102,18 @@ export const Header: React.FC = () => {
               <span className="font-mono">
                 {connectionStatus.connected
                   ? connectionStatus.port || 'Connected'
-                  : 'Disconnected'}
+                  : mode === 'LIVE' ? 'Connect COM Port' : 'Disconnected'}
               </span>
               <RefreshCw className="h-3 w-3 text-slate-400 hover:rotate-180 transition-transform" />
             </button>
 
             {/* COM Port Selector Menu */}
             {showPortMenu && (
-              <div className="absolute right-0 mt-2 w-64 rounded-xl glass-panel p-3 shadow-2xl z-50 border border-slate-700">
+              <div className="absolute right-0 mt-2 w-72 rounded-xl glass-panel p-3 shadow-2xl z-50 border border-slate-700">
                 <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
-                  <span className="text-xs font-bold text-slate-300">COM Port Selector</span>
+                  <span className="text-xs font-bold text-slate-300">Select COM Port</span>
                   <button onClick={refreshPorts} className="text-slate-400 hover:text-white text-xs flex items-center gap-1">
-                    <RefreshCw className="h-3 w-3" /> Refresh
+                    <RefreshCw className="h-3 w-3" /> Rescan
                   </button>
                 </div>
                 {availablePorts.length === 0 ? (
@@ -122,13 +127,16 @@ export const Header: React.FC = () => {
                           switchMode('LIVE', p.path);
                           setShowPortMenu(false);
                         }}
-                        className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-mono flex items-center justify-between transition-colors ${
+                        className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-mono flex items-center justify-between transition-colors ${
                           connectionStatus.port === p.path
                             ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                             : 'hover:bg-slate-800 text-slate-300'
                         }`}
                       >
-                        <span>{p.path}</span>
+                        <div className="flex flex-col">
+                          <span className="font-bold text-white">{p.path}</span>
+                          <span className="text-[10px] text-slate-400">{p.friendlyName || p.manufacturer}</span>
+                        </div>
                         {p.isArduino && (
                           <span className="text-[10px] bg-emerald-950 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-800">
                             Arduino

@@ -32,7 +32,6 @@ export class DataSourceManager extends EventEmitter {
 
       this.lastData = fullPayload;
       
-      // Save telemetry record to SQLite
       try {
         saveTelemetry(fullPayload, this.mode, riskScore);
       } catch (err) {
@@ -62,15 +61,14 @@ export class DataSourceManager extends EventEmitter {
   }
 
   async init() {
-    // Attempt auto-connect to Live Serial port. If unsuccessful, fallback to SIMULATION mode.
     console.log('Initializing DataSourceManager...');
     const serialSuccess = await this.serialSource.connect();
     if (serialSuccess) {
-      console.log('Successfully connected to Arduino Serial! Setting mode to LIVE.');
+      console.log('Successfully auto-connected to Arduino Serial! Mode set to LIVE.');
       this.mode = 'LIVE';
       this.activeSource = this.serialSource;
     } else {
-      console.log('No physical Arduino Serial connection found on boot. Setting default mode to SIMULATION.');
+      console.log('No physical Arduino Serial connection ready on boot. Defaulting mode to SIMULATION.');
       this.mode = 'SIMULATION';
       this.activeSource = this.simSource;
       await this.simSource.connect();
@@ -83,15 +81,7 @@ export class DataSourceManager extends EventEmitter {
       throw new Error('Invalid mode. Must be LIVE or SIMULATION');
     }
 
-    if (this.mode === newMode && this.activeSource) {
-      if (newMode === 'LIVE' && portPath && this.serialSource.currentPortName !== portPath) {
-        // Switch to specific COM port if requested
-        await this.serialSource.connect(portPath);
-      }
-      return this.getStatus();
-    }
-
-    console.log(`Switching DataSourceManager mode from ${this.mode} to ${newMode}`);
+    console.log(`Switching DataSourceManager mode to ${newMode} (Target Port: ${portPath || 'Auto'})`);
 
     if (this.activeSource) {
       await this.activeSource.disconnect();
@@ -103,10 +93,7 @@ export class DataSourceManager extends EventEmitter {
       this.activeSource = this.serialSource;
       const connected = await this.serialSource.connect(portPath);
       if (!connected) {
-        console.warn('Failed to switch to LIVE mode (Serial port unavailable). Falling back to SIMULATION.');
-        this.mode = 'SIMULATION';
-        this.activeSource = this.simSource;
-        await this.simSource.connect();
+        console.warn('Serial connection attempt returned false. Remaining in LIVE mode so user can select/retry COM port.');
       }
     } else {
       this.activeSource = this.simSource;

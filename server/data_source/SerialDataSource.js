@@ -17,20 +17,36 @@ export class SerialDataSource extends BaseDataSource {
   async listAvailablePorts() {
     try {
       const ports = await SerialPort.list();
-      return ports.map(p => ({
-        path: p.path,
-        manufacturer: p.manufacturer || 'Unknown',
-        serialNumber: p.serialNumber || '',
-        pnpId: p.pnpId || '',
-        vendorId: p.vendorId || '',
-        productId: p.productId || '',
-        isArduino: (
-          (p.manufacturer && p.manufacturer.toLowerCase().includes('arduino')) ||
-          (p.pnpId && p.pnpId.toLowerCase().includes('arduino')) ||
-          p.vendorId === '2341' || // Arduino SA Vendor ID
-          p.vendorId === '1a86'    // CH340 USB Serial
-        )
-      }));
+      return ports.map(p => {
+        const vId = (p.vendorId || '').toLowerCase();
+        const mfg = (p.manufacturer || '').toLowerCase();
+        const pnp = (p.pnpId || '').toLowerCase();
+        const friendly = (p.friendlyName || '').toLowerCase();
+
+        const isArduino = Boolean(
+          mfg.includes('arduino') ||
+          mfg.includes('wch') ||
+          pnp.includes('arduino') ||
+          friendly.includes('ch340') ||
+          friendly.includes('serial') ||
+          friendly.includes('arduino') ||
+          vId === '2341' || // Arduino SA
+          vId === '1a86' || // CH340 USB Serial (WinCH)
+          vId === '0403' || // FTDI
+          vId === '10c4'    // Silicon Labs CP210x
+        );
+
+        return {
+          path: p.path,
+          manufacturer: p.manufacturer || 'Unknown',
+          serialNumber: p.serialNumber || '',
+          pnpId: p.pnpId || '',
+          vendorId: p.vendorId || '',
+          productId: p.productId || '',
+          friendlyName: p.friendlyName || p.path,
+          isArduino
+        };
+      });
     } catch (err) {
       console.error('Error listing serial ports:', err);
       return [];
@@ -39,11 +55,12 @@ export class SerialDataSource extends BaseDataSource {
 
   async autoDetectPort() {
     const ports = await this.listAvailablePorts();
+    console.log('Available ports detected:', ports);
     const arduinoPort = ports.find(p => p.isArduino);
     if (arduinoPort) {
       return arduinoPort.path;
     }
-    // Fallback: pick first available COM port if any
+    // Fallback: pick first available COM port if any exists
     return ports.length > 0 ? ports[0].path : null;
   }
 
@@ -52,15 +69,17 @@ export class SerialDataSource extends BaseDataSource {
       await this.disconnect();
     }
 
+    this.autoReconnect = true;
     const portToOpen = targetPort || await this.autoDetectPort();
+
     if (!portToOpen) {
+      console.warn('No COM ports available to open.');
       this.isConnected = false;
       this.emit('status', {
         connected: false,
         port: null,
-        message: 'No Arduino or Serial Device detected.'
+        message: 'No COM Port detected. Please plug in Arduino Mega 2560.'
       });
-      this.scheduleReconnect();
       return false;
     }
 
@@ -68,6 +87,7 @@ export class SerialDataSource extends BaseDataSource {
 
     return new Promise((resolve) => {
       try {
+        console.log(`Opening serial port ${portToOpen} at ${this.baudRate} baud...`);
         this.port = new SerialPort({
           path: portToOpen,
           baudRate: this.baudRate,
@@ -78,24 +98,34 @@ export class SerialDataSource extends BaseDataSource {
 
         this.port.open((err) => {
           if (err) {
-            console.warn(`Failed to open serial port ${portToOpen}:`, err.message);
+            console.error(`Failed to open serial port ${portToOpen}:`, err.message);
             this.isConnected = false;
             this.emit('status', {
               connected: false,
               port: portToOpen,
-              error: err.message
+              error: err.message,
+              message: err.message.includes('Access denied')
+                ? `Port ${portToOpen} is locked by Arduino IDE. Please close Serial Monitor.`
+                : `Error opening ${portToOpen}: ${err.message}`
             });
-            this.scheduleReconnect();
+            this.emit('alert', {
+              type: 'PORT_ERROR',
+              message: err.message.includes('Access denied')
+                ? `COM Port ${portToOpen} Access Denied. Close Arduino IDE Serial Monitor.`
+                : `Failed to open ${portToOpen}: ${err.message}`,
+              severity: 'CRITICAL'
+            });
             resolve(false);
             return;
           }
 
           this.isConnected = true;
+          console.log(`Successfully opened serial port ${portToOpen}`);
           this.emit('status', {
             connected: true,
             port: portToOpen,
             baudRate: this.baudRate,
-            message: `Connected to ${portToOpen}`
+            message: `Connected to Arduino on ${portToOpen}`
           });
 
           resolve(true);
@@ -111,7 +141,7 @@ export class SerialDataSource extends BaseDataSource {
           this.emit('status', {
             connected: false,
             port: this.currentPortName,
-            message: 'Port closed unexpectedly'
+            message: 'Port closed'
           });
           this.emit('alert', {
             type: 'DISCONNECT',
@@ -129,7 +159,6 @@ export class SerialDataSource extends BaseDataSource {
       } catch (err) {
         console.error('Error instantiating SerialPort:', err);
         this.isConnected = false;
-        this.scheduleReconnect();
         resolve(false);
       }
     });
@@ -143,7 +172,6 @@ export class SerialDataSource extends BaseDataSource {
       const data = JSON.parse(line);
       this.lastPacketTime = new Date().toISOString();
       
-      // Ensure all fields exist with fallback values
       const parsedData = {
         temperature: Number(data.temperature ?? 25.0),
         humidity: Number(data.humidity ?? 50),
@@ -166,11 +194,11 @@ export class SerialDataSource extends BaseDataSource {
     if (!this.autoReconnect || this.reconnectTimer) return;
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null;
-      if (!this.isConnected) {
-        console.log('Attempting auto-reconnect to Arduino Serial...');
+      if (!this.isConnected && this.currentPortName) {
+        console.log(`Attempting auto-reconnect to ${this.currentPortName}...`);
         await this.connect(this.currentPortName);
       }
-    }, 5000);
+    }, 4000);
   }
 
   async disconnect() {
