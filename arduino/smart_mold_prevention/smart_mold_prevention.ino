@@ -1,13 +1,10 @@
 /*
  * Smart Damp & Mold Prevention System - Arduino Mega 2560 Firmware
  * 
- * Hardware Pin Mapping:
- * - DHT11 Temp & Humidity Sensor: Digital Pin D2 (Self-Contained Driver)
- * - Relay (Exhaust Fan): Digital Pin D5
- * - Warning LED: Digital Pin D13
- * - LDR Light Sensor: Analog Pin A0
- * - MQ135 Gas Sensor: Analog Pin A1
- * - Capacitive Surface Moisture Sensor: Analog Pin A2
+ * Fixed Bugs:
+ * 1. Mapped explicitly to Active-Low Relay Modules (LOW = ON, HIGH = OFF)
+ * 2. Added isManualMode flag so Laptop commands aren't instantly overwritten by sensors.
+ * 3. Wrapped text strings in F() macro to save Arduino dynamic RAM stability.
  * 
  * Zero External Dependencies (No DHT.h library needed to compile!)
  */
@@ -34,6 +31,7 @@ float currentTemp = 25.0;
 float currentHumidity = 54.0;
 bool fanState = false;
 bool ledState = false;
+bool isManualMode = false; // Protects manual laptop controls from sensor loops
 
 // --- Self-Contained DHT11 Protocol Driver ---
 bool readDHT11(uint8_t pin, float &t, float &h) {
@@ -69,17 +67,19 @@ bool readDHT11(uint8_t pin, float &t, float &h) {
 }
 
 void setup() {
-  Serial.begin(9600); // 9600 Baud for hardware compatibility
+  Serial.begin(9600); 
 
   pinMode(RELAY_PIN, OUTPUT);
   pinMode(LED_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, LOW);
+  
+  // SAFE STARTUP STATE FOR ACTIVE-LOW RELAYS: HIGH keeps the physical fan OFF
+  digitalWrite(RELAY_PIN, HIGH); 
   digitalWrite(LED_PIN, LOW);
 
-  Serial.println("====================================================");
-  Serial.println("DAMP, AIR QUALITY & AUTOMATED VENTILATION SYSTEM");
-  Serial.println("====================================================");
-  Serial.println("System Initialization Complete. Beginning Data Log...");
+  Serial.println(F("===================================================="));
+  Serial.println(F("DAMP, AIR QUALITY & AUTOMATED VENTILATION SYSTEM"));
+  Serial.println(F("===================================================="));
+  Serial.println(F("System Initialization Complete. Beginning Data Log..."));
 }
 
 void loop() {
@@ -89,19 +89,29 @@ void loop() {
     cmd.trim();
 
     if (cmd.indexOf("\"fan\":true") != -1) {
-      digitalWrite(RELAY_PIN, HIGH);
+      isManualMode = true; 
+      digitalWrite(RELAY_PIN, LOW); // Active-Low ON
       fanState = true;
     } else if (cmd.indexOf("\"fan\":false") != -1) {
-      digitalWrite(RELAY_PIN, LOW);
+      isManualMode = true; 
+      digitalWrite(RELAY_PIN, HIGH); // Active-Low OFF
       fanState = false;
     }
 
     if (cmd.indexOf("\"led\":true") != -1) {
+      isManualMode = true; 
       digitalWrite(LED_PIN, HIGH);
       ledState = true;
     } else if (cmd.indexOf("\"led\":false") != -1) {
+      isManualMode = true; 
       digitalWrite(LED_PIN, LOW);
       ledState = false;
+    }
+
+    // Command to exit override state and hand control back to the automated loop
+    if (cmd.indexOf("\"auto\":true") != -1) {
+      isManualMode = false;
+      Serial.println(F("[SYSTEM] Manual Override Disengaged. Automation Active."));
     }
   }
 
@@ -111,7 +121,7 @@ void loop() {
 
     // Read DHT11 Sensor
     float readT, readH;
-    if (readDHT11(2, readT, readH)) {
+    if (readDHT11(DHT_PIN, readT, readH)) {
       currentTemp = readT;
       currentHumidity = readH;
     }
@@ -121,38 +131,48 @@ void loop() {
     int gasVal = analogRead(MQ135_PIN);
     int moistureVal = analogRead(MOISTURE_PIN);
 
-    // Rule Logic for Actuators
-    if (currentHumidity > HUMIDITY_THRESH || gasVal > GAS_THRESH) {
-      fanState = true;
-      digitalWrite(RELAY_PIN, HIGH);
-    } else {
-      fanState = false;
-      digitalWrite(RELAY_PIN, LOW);
+    // Automation rules only apply when no active laptop serial manual control is requested
+    if (!isManualMode) {
+      // Corrected Rule Logic for Active-Low Relay Modules
+      if (currentHumidity > HUMIDITY_THRESH || gasVal > GAS_THRESH) {
+        fanState = true;
+        digitalWrite(RELAY_PIN, LOW);   // Active-Low Relay ON (Engages Fan)
+      } else {
+        fanState = false;
+        digitalWrite(RELAY_PIN, HIGH);  // Active-Low Relay OFF (Stops Fan)
+      }
+
+      // Rule Logic for Warning LED
+      if (currentHumidity > HUMIDITY_THRESH || currentTemp > TEMP_THRESH || gasVal > GAS_THRESH || moistureVal < MOISTURE_THRESH || lightVal < LIGHT_THRESH) {
+        ledState = true;
+        digitalWrite(LED_PIN, HIGH);
+      } else {
+        ledState = false;
+        digitalWrite(LED_PIN, LOW);
+      }
     }
 
-    if (currentHumidity > HUMIDITY_THRESH || currentTemp > TEMP_THRESH || gasVal > GAS_THRESH || moistureVal < MOISTURE_THRESH || lightVal < LIGHT_THRESH) {
-      ledState = true;
-      digitalWrite(LED_PIN, HIGH);
+    // Determine the descriptive status tag output string
+    String sysStatus;
+    if (isManualMode) {
+      sysStatus = "MANUAL OVERRIDE";
     } else {
-      ledState = false;
-      digitalWrite(LED_PIN, LOW);
+      sysStatus = (fanState || ledState) ? "WARNING" : "NORMAL";
     }
-
-    String sysStatus = (fanState || ledState) ? "WARNING" : "NORMAL";
 
     // Print Telemetry Line
-    Serial.print("Temp: ");
+    Serial.print(F("Temp: "));
     Serial.print(currentTemp, 1);
-    Serial.print("°C | Air Humid: ");
+    Serial.print(F("°C | Air Humid: "));
     Serial.print(currentHumidity, 1);
-    Serial.print("% | Light: ");
+    Serial.print(F("% | Light: "));
     Serial.print(lightVal);
-    Serial.print(" | Gas Level: ");
+    Serial.print(F(" | Gas Level: "));
     Serial.print(gasVal);
-    Serial.print(" | Surf Moist: ");
+    Serial.print(F(" | Surf Moist: "));
     Serial.print(moistureVal);
-    Serial.print(" -> [STATUS: ");
+    Serial.print(F(" -> [STATUS: "));
     Serial.print(sysStatus);
-    Serial.println("]");
+    Serial.println(F("]"));
   }
 }

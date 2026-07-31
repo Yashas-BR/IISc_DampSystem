@@ -6,7 +6,7 @@ import { saveTelemetry, saveAlert, getSettings } from '../db.js';
 export class DataSourceManager extends EventEmitter {
   constructor() {
     super();
-    this.mode = 'SIMULATION'; // Default mode ('LIVE' | 'SIMULATION')
+    this.mode = 'SIMULATION'; // Default mode ('LIVE' | 'SIMULATION' | 'CLOUD')
     this.settings = getSettings();
     
     this.serialSource = new SerialDataSource();
@@ -21,7 +21,7 @@ export class DataSourceManager extends EventEmitter {
 
   setupListeners(source) {
     source.on('data', (data) => {
-      if (source !== this.activeSource) return;
+      if (source !== this.activeSource && this.mode !== 'CLOUD') return;
 
       const riskScore = this.calculateRiskScore(data);
       const fullPayload = {
@@ -42,7 +42,7 @@ export class DataSourceManager extends EventEmitter {
     });
 
     source.on('status', (status) => {
-      if (source !== this.activeSource) return;
+      if (source !== this.activeSource && this.mode !== 'CLOUD') return;
       this.emit('connection_status', {
         mode: this.mode,
         ...status
@@ -50,13 +50,52 @@ export class DataSourceManager extends EventEmitter {
     });
 
     source.on('alert', (alertData) => {
-      if (source !== this.activeSource) return;
+      if (source !== this.activeSource && this.mode !== 'CLOUD') return;
       try {
         saveAlert(alertData.type, alertData.message, alertData.severity);
       } catch (e) {
         console.error('Failed to log alert to DB:', e.message);
       }
       this.emit('alert', alertData);
+    });
+  }
+
+  // Support direct Cloud HTTP / Wireless Wi-Fi Ingestion from battery-powered Arduino/ESP32
+  handleCloudTelemetry(data) {
+    const parsedData = {
+      temperature: Number(data.temperature ?? 25.0),
+      humidity: Number(data.humidity ?? 50),
+      light: Number(data.light ?? 500),
+      gas: Number(data.gas ?? 400),
+      moisture: Number(data.moisture ?? 600),
+      fan: Boolean(data.fan),
+      led: Boolean(data.led),
+      status: data.status || 'NORMAL',
+      timestamp: new Date().toISOString()
+    };
+
+    const riskScore = this.calculateRiskScore(parsedData);
+    const fullPayload = {
+      ...parsedData,
+      riskScore,
+      mode: 'CLOUD'
+    };
+
+    this.mode = 'CLOUD';
+    this.lastData = fullPayload;
+
+    try {
+      saveTelemetry(fullPayload, 'CLOUD', riskScore);
+    } catch (err) {
+      console.error('Failed to save cloud telemetry to DB:', err.message);
+    }
+
+    this.emit('telemetry', fullPayload);
+    this.emit('connection_status', {
+      connected: true,
+      port: 'WIRELESS_CLOUD_WIFI',
+      mode: 'CLOUD',
+      message: 'Receiving Wireless Cloud Telemetry over Wi-Fi'
     });
   }
 
@@ -68,7 +107,7 @@ export class DataSourceManager extends EventEmitter {
       this.mode = 'LIVE';
       this.activeSource = this.serialSource;
     } else {
-      console.log('No physical Arduino Serial connection ready on boot. Defaulting mode to SIMULATION.');
+      console.log('No physical USB Serial connection ready on boot. Defaulting mode to SIMULATION.');
       this.mode = 'SIMULATION';
       this.activeSource = this.simSource;
       await this.simSource.connect();
@@ -77,11 +116,7 @@ export class DataSourceManager extends EventEmitter {
   }
 
   async setMode(newMode, portPath = null) {
-    if (newMode !== 'LIVE' && newMode !== 'SIMULATION') {
-      throw new Error('Invalid mode. Must be LIVE or SIMULATION');
-    }
-
-    console.log(`Switching DataSourceManager mode to ${newMode} (Target Port: ${portPath || 'Auto'})`);
+    console.log(`Switching DataSourceManager mode to ${newMode}`);
 
     if (this.activeSource) {
       await this.activeSource.disconnect();
@@ -93,8 +128,11 @@ export class DataSourceManager extends EventEmitter {
       this.activeSource = this.serialSource;
       const connected = await this.serialSource.connect(portPath);
       if (!connected) {
-        console.warn('Serial connection attempt returned false. Remaining in LIVE mode so user can select/retry COM port.');
+        console.warn('Serial connection attempt returned false.');
       }
+    } else if (newMode === 'CLOUD') {
+      this.activeSource = null;
+      console.log('Mode set to WIRELESS CLOUD (Listening on POST /api/telemetry)');
     } else {
       this.activeSource = this.simSource;
       await this.simSource.connect();
@@ -143,7 +181,7 @@ export class DataSourceManager extends EventEmitter {
   getStatus() {
     return {
       mode: this.mode,
-      activeSourceStatus: this.activeSource ? this.activeSource.getStatus() : null,
+      activeSourceStatus: this.activeSource ? this.activeSource.getStatus() : { name: 'CLOUD', connected: true, port: 'WIRELESS_CLOUD_WIFI' },
       lastData: this.lastData,
       settings: this.settings
     };

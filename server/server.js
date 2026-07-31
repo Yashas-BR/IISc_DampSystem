@@ -52,6 +52,18 @@ io.on('connection', (socket) => {
 
 // --- REST API Endpoints ---
 
+// Wireless Cloud Telemetry Ingestion (for Battery-Powered ESP8266 / ESP32 Wi-Fi without USB)
+app.post('/api/telemetry', (req, res) => {
+  try {
+    if (dsManager) {
+      dsManager.handleCloudTelemetry(req.body);
+    }
+    res.json({ success: true, mode: 'CLOUD', timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/status', async (req, res) => {
   try {
     if (!dsManager) return res.status(503).json({ error: 'System initializing' });
